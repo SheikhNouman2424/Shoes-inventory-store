@@ -1,0 +1,1406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eco Shoes Inventory System</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts for Barcode -->
+    <link href="https://fonts.googleapis.com/css2?family=Libre+Barcode+39&display=swap" rel="stylesheet">
+    <style>
+        .font-barcode { font-family: 'Libre Barcode 39', cursive, monospace; }
+        /* Hide scrollbar for clean UI but allow scrolling */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+
+    <!-- Import Maps for React and Lucide Icons -->
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.2.0",
+          "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+          "lucide-react": "https://esm.sh/lucide-react@0.294.0"
+        }
+      }
+    </script>
+    
+    <!-- Babel for in-browser JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-900">
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+          Home, ShoppingCart, Package, Users, Truck, RotateCcw, 
+          BarChart2, Settings, LogOut, Search, Plus, Minus, Printer, 
+          Save, Download, Upload, AlertCircle, CheckCircle, FileText 
+        } from 'lucide-react';
+
+        // --- GLOBAL ALERT SYSTEM (Replaces window.alert) ---
+        let globalShowAlert = (msg) => console.log(msg);
+
+        const GlobalAlert = () => {
+          const [msg, setMsg] = useState('');
+          useEffect(() => {
+            globalShowAlert = (newMsg) => setMsg(newMsg);
+          }, []);
+
+          if (!msg) return null;
+          return (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] p-4">
+              <div className="bg-white rounded-lg shadow-xl w-full max-w-sm transform transition-all">
+                <div className="p-4 border-b font-bold text-lg text-blue-600 flex items-center gap-2">
+                  <AlertCircle size={20} /> System Notice
+                </div>
+                <div className="p-6 text-gray-800 text-center">{msg}</div>
+                <div className="p-4 border-t flex justify-end">
+                  <button onClick={() => setMsg('')} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded font-medium transition-colors">
+                    OK
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // --- DATABASE & INITIAL STATE ---
+        const INITIAL_DB = {
+          users: [
+            { id: 'u1', username: 'admin', password: '123', role: 'admin', terminalId: 'Admin-PC' },
+            { id: 'u2', username: 'staff1', password: '123', role: 'staff', terminalId: 'POS-1' },
+            { id: 'u3', username: 'staff2', password: '123', role: 'staff', terminalId: 'POS-2' }
+          ],
+          products: [],
+          buyers: [],
+          vendors: [],
+          sales: [],
+          purchases: [],
+          returns: [], 
+          ledgers: [], 
+          auditLogs: []
+        };
+
+        // --- HELPER FUNCTIONS ---
+        const generateId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+        const formatCurrency = (amount) => `Rs. ${Number(amount).toLocaleString()}`;
+        const formatDate = (ts) => new Date(ts).toLocaleString();
+
+        // --- UI COMPONENTS ---
+        const Card = ({ children, title, className = "" }) => (
+          <div className={`bg-white rounded-lg shadow-md p-4 ${className}`}>
+            {title && <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">{title}</h2>}
+            {children}
+          </div>
+        );
+
+        const Button = ({ children, onClick, variant = 'primary', icon: Icon, className = "", disabled, type = "button" }) => {
+          const baseStyle = "flex items-center justify-center gap-2 px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50";
+          const variants = {
+            primary: "bg-blue-600 hover:bg-blue-700 text-white",
+            secondary: "bg-gray-200 hover:bg-gray-300 text-gray-800",
+            danger: "bg-red-600 hover:bg-red-700 text-white",
+            success: "bg-green-600 hover:bg-green-700 text-white"
+          };
+          return (
+            <button type={type} onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>
+              {Icon && <Icon size={18} />}
+              {children}
+            </button>
+          );
+        };
+
+        const Input = ({ label, type = "text", value, onChange, ...props }) => (
+          <div className="mb-3 w-full">
+            {label && <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>}
+            <input
+              type={type}
+              value={value}
+              onChange={onChange}
+              className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none"
+              {...props}
+            />
+          </div>
+        );
+
+        const Modal = ({ isOpen, onClose, title, children }) => {
+          if (!isOpen) return null;
+          return (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center p-4 border-b">
+                  <h3 className="text-xl font-bold">{title}</h3>
+                  <button type="button" onClick={onClose} className="text-gray-500 hover:text-black text-2xl leading-none">&times;</button>
+                </div>
+                <div className="p-4">{children}</div>
+              </div>
+            </div>
+          );
+        };
+
+        // --- MAIN APP COMPONENT ---
+        function App() {
+          const [db, setDb] = useState(INITIAL_DB);
+          const [currentUser, setCurrentUser] = useState(null);
+          const [currentView, setCurrentView] = useState('dashboard');
+          const [loading, setLoading] = useState(true);
+
+          useEffect(() => {
+            const savedDb = localStorage.getItem('ecoShoesDb');
+            if (savedDb) {
+              setDb(JSON.parse(savedDb));
+            }
+            const savedUser = sessionStorage.getItem('ecoCurrentUser');
+            if (savedUser) {
+              setCurrentUser(JSON.parse(savedUser));
+            }
+            setLoading(false);
+          }, []);
+
+          const updateDb = (updaterFn, logAction = null) => {
+            setDb(prev => {
+              const nextDb = updaterFn({ ...prev });
+              if (logAction && currentUser) {
+                nextDb.auditLogs = [{
+                  id: generateId('log'),
+                  action: logAction,
+                  user: currentUser.username,
+                  terminal: currentUser.terminalId,
+                  date: Date.now()
+                }, ...nextDb.auditLogs].slice(0, 1000); 
+              }
+              localStorage.setItem('ecoShoesDb', JSON.stringify(nextDb));
+              return nextDb;
+            });
+          };
+
+          const handleLogin = (username, password) => {
+            const user = db.users.find(u => u.username === username && u.password === password);
+            if (user) {
+              setCurrentUser(user);
+              sessionStorage.setItem('ecoCurrentUser', JSON.stringify(user));
+              setCurrentView(user.role === 'admin' ? 'dashboard' : 'pos');
+              updateDb(d => d, `User Login: ${username}`);
+            } else {
+              globalShowAlert("Invalid credentials");
+            }
+          };
+
+          const handleLogout = () => {
+            updateDb(d => d, `User Logout: ${currentUser.username}`);
+            setCurrentUser(null);
+            sessionStorage.removeItem('ecoCurrentUser');
+          };
+
+          if (loading) return <div className="flex items-center justify-center h-screen">Loading Eco Shoes System...</div>;
+
+          if (!currentUser) return (
+            <>
+              <GlobalAlert />
+              <LoginScreen onLogin={handleLogin} />
+            </>
+          );
+
+          const isAdmin = currentUser.role === 'admin';
+          const navigate = (view) => setCurrentView(view);
+
+          return (
+            <div className="flex h-screen bg-gray-100 font-sans print:bg-white">
+              <GlobalAlert />
+              
+              <div className="w-64 bg-gray-900 text-white flex flex-col print:hidden">
+                <div className="p-4 border-b border-gray-800 text-center">
+                  <h1 className="text-2xl font-black text-blue-400">ECO SHOES</h1>
+                  <p className="text-xs text-gray-400 mt-1">Warehouse & Wholesale</p>
+                  <div className="mt-2 text-sm bg-gray-800 rounded p-1">
+                    <span className="text-green-400">●</span> {currentUser.username} ({currentUser.terminalId})
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto py-4">
+                  <NavItem active={currentView==='dashboard'} onClick={() => navigate('dashboard')} icon={Home} label="Dashboard" hidden={!isAdmin} />
+                  <NavItem active={currentView==='pos'} onClick={() => navigate('pos')} icon={ShoppingCart} label="Point of Sale (POS)" />
+                  <NavItem active={currentView==='products'} onClick={() => navigate('products')} icon={Package} label="Products & Stock" hidden={!isAdmin} />
+                  <NavItem active={currentView==='purchases'} onClick={() => navigate('purchases')} icon={Truck} label="Purchases" hidden={!isAdmin} />
+                  <NavItem active={currentView==='buyers'} onClick={() => navigate('buyers')} icon={Users} label="Buyers & Ledgers" hidden={!isAdmin} />
+                  <NavItem active={currentView==='vendors'} onClick={() => navigate('vendors')} icon={Users} label="Vendors & Ledgers" hidden={!isAdmin} />
+                  <NavItem active={currentView==='returns'} onClick={() => navigate('returns')} icon={RotateCcw} label="Returns & Refunds" />
+                  <NavItem active={currentView==='reports'} onClick={() => navigate('reports')} icon={BarChart2} label="Reports" hidden={!isAdmin} />
+                  <NavItem active={currentView==='system'} onClick={() => navigate('system')} icon={Settings} label="Sync & System" hidden={!isAdmin} />
+                </div>
+                <div className="p-4 border-t border-gray-800">
+                  <button onClick={handleLogout} className="flex items-center gap-2 text-red-400 hover:text-red-300 w-full">
+                    <LogOut size={18} /> Logout
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto relative print:overflow-visible">
+                <div className="p-6 print:p-0">
+                  {currentView === 'dashboard' && isAdmin && <Dashboard db={db} />}
+                  {currentView === 'pos' && <POS db={db} updateDb={updateDb} currentUser={currentUser} />}
+                  {currentView === 'products' && isAdmin && <Products db={db} updateDb={updateDb} />}
+                  {currentView === 'purchases' && isAdmin && <Purchases db={db} updateDb={updateDb} currentUser={currentUser} />}
+                  {currentView === 'buyers' && isAdmin && <Contacts db={db} updateDb={updateDb} type="buyer" currentUser={currentUser} />}
+                  {currentView === 'vendors' && isAdmin && <Contacts db={db} updateDb={updateDb} type="vendor" currentUser={currentUser} />}
+                  {currentView === 'returns' && <Returns db={db} updateDb={updateDb} currentUser={currentUser} isAdmin={isAdmin} />}
+                  {currentView === 'reports' && isAdmin && <Reports db={db} />}
+                  {currentView === 'system' && isAdmin && <System db={db} updateDb={updateDb} currentUser={currentUser} />}
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // --- SUB-COMPONENTS ---
+        const NavItem = ({ active, onClick, icon: Icon, label, hidden }) => {
+          if (hidden) return null;
+          return (
+            <button
+              onClick={onClick}
+              className={`w-full flex items-center gap-3 px-6 py-3 text-left transition-colors ${
+                active ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800'
+              }`}
+            >
+              <Icon size={20} />
+              <span>{label}</span>
+            </button>
+          );
+        };
+
+        const LoginScreen = ({ onLogin }) => {
+          const [username, setUsername] = useState('admin');
+          const [password, setPassword] = useState('123');
+
+          return (
+            <div className="h-screen bg-gray-200 flex items-center justify-center">
+              <div className="bg-white p-8 rounded-xl shadow-2xl w-96 text-center">
+                <div className="bg-blue-600 text-white p-4 rounded-full w-20 h-20 mx-auto flex items-center justify-center mb-6">
+                  <Package size={40} />
+                </div>
+                <h1 className="text-2xl font-bold mb-2 text-gray-800">Eco Shoes System</h1>
+                <p className="text-gray-500 mb-6 text-sm">Offline Warehouse & Wholesale POS</p>
+                
+                <form onSubmit={(e) => { e.preventDefault(); onLogin(username, password); }}>
+                  <Input label="Username" value={username} onChange={e => setUsername(e.target.value)} required />
+                  <Input label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+                  <Button className="w-full mt-4" type="submit">Login to System</Button>
+                </form>
+                <div className="mt-4 text-xs text-gray-400">
+                  Demo: Admin (admin/123) | Staff (staff1/123)
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const Dashboard = ({ db }) => {
+          const today = new Date().setHours(0,0,0,0);
+          
+          const todaySales = db.sales.filter(s => s.date >= today);
+          const totalSalesAmount = todaySales.reduce((sum, s) => sum + s.netTotal, 0);
+          const totalReceived = todaySales.reduce((sum, s) => sum + s.paid, 0);
+          
+          const totalReceivable = db.buyers.reduce((sum, b) => sum + (b.balance || 0), 0);
+          const totalPayable = db.vendors.reduce((sum, v) => sum + (v.balance || 0), 0);
+          const totalStock = db.products.reduce((sum, p) => sum + (p.quantity || 0), 0);
+          const totalDefective = db.products.reduce((sum, p) => sum + (p.defectiveQuantity || 0), 0);
+
+          return (
+            <div>
+              <h1 className="text-2xl font-bold mb-6">Admin Dashboard</h1>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <StatCard title="Today's Sales" value={formatCurrency(totalSalesAmount)} icon={ShoppingCart} color="bg-blue-500" />
+                <StatCard title="Today's Receipts" value={formatCurrency(totalReceived)} icon={CheckCircle} color="bg-green-500" />
+                <StatCard title="Total Receivable" value={formatCurrency(totalReceivable)} icon={Users} color="bg-purple-500" />
+                <StatCard title="Total Payable" value={formatCurrency(totalPayable)} icon={Truck} color="bg-red-500" />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Card title="Inventory Overview">
+                  <div className="flex justify-between items-center py-2 border-b">
+                    <span>Total Saleable Stock</span>
+                    <span className="font-bold text-lg">{totalStock} Units</span>
+                  </div>
+                  <div className="flex justify-between items-center py-2">
+                    <span>Total Defective Stock</span>
+                    <span className="font-bold text-lg text-red-500">{totalDefective} Units</span>
+                  </div>
+                </Card>
+                <Card title="Recent Activity">
+                  {db.auditLogs.slice(0, 5).map(log => (
+                    <div key={log.id} className="text-sm py-1 border-b last:border-0">
+                      <span className="text-gray-500">{new Date(log.date).toLocaleTimeString()}</span> - 
+                      <span className="font-medium ml-2">{log.action}</span> by {log.user}
+                    </div>
+                  ))}
+                </Card>
+              </div>
+            </div>
+          );
+        };
+
+        const StatCard = ({ title, value, icon: Icon, color }) => (
+          <div className="bg-white rounded-lg shadow p-4 flex items-center">
+            <div className={`p-3 rounded-full text-white ${color} mr-4`}>
+              <Icon size={24} />
+            </div>
+            <div>
+              <p className="text-gray-500 text-sm font-medium">{title}</p>
+              <p className="text-xl font-bold text-gray-800">{value}</p>
+            </div>
+          </div>
+        );
+
+        const POS = ({ db, updateDb, currentUser }) => {
+          const [cart, setCart] = useState([]);
+          const [barcodeInput, setBarcodeInput] = useState('');
+          const [selectedBuyerId, setSelectedBuyerId] = useState('');
+          const [discount, setDiscount] = useState(0);
+          const [paidAmount, setPaidAmount] = useState('');
+          
+          const [qtyModal, setQtyModal] = useState({ isOpen: false, product: null });
+          const [invoiceModal, setInvoiceModal] = useState({ isOpen: false, sale: null });
+
+          const grossTotal = cart.reduce((sum, item) => sum + item.lineTotal, 0);
+          const netTotal = grossTotal - Number(discount || 0);
+
+          const handleScan = (e) => {
+            e.preventDefault();
+            if (!barcodeInput) return;
+            const product = db.products.find(p => p.barcode === barcodeInput || p.sku === barcodeInput);
+            
+            if (product) {
+              if (product.quantity <= 0) {
+                globalShowAlert("Out of stock!");
+                setBarcodeInput('');
+                return;
+              }
+              setQtyModal({ isOpen: true, product });
+            } else {
+              globalShowAlert("Product not found with this Barcode/SKU");
+            }
+            setBarcodeInput('');
+          };
+
+          const handleAddQuantity = (qty) => {
+            const { product } = qtyModal;
+            const q = Number(qty);
+            if (q <= 0) return globalShowAlert("Invalid quantity");
+            if (q > product.quantity) return globalShowAlert(`Only ${product.quantity} available in stock.`);
+
+            const existing = cart.find(i => i.productId === product.id);
+            if (existing) {
+              if (existing.quantity + q > product.quantity) return globalShowAlert(`Cannot exceed available stock (${product.quantity}).`);
+              setCart(cart.map(i => i.productId === product.id 
+                ? { ...i, quantity: i.quantity + q, lineTotal: (i.quantity + q) * i.price } 
+                : i));
+            } else {
+              setCart([...cart, {
+                productId: product.id,
+                barcode: product.barcode,
+                name: product.name,
+                price: product.salePrice,
+                quantity: q,
+                lineTotal: q * product.salePrice
+              }]);
+            }
+            setQtyModal({ isOpen: false, product: null });
+          };
+
+          const completeSale = () => {
+            if (cart.length === 0) return globalShowAlert("Cart is empty");
+            if (!selectedBuyerId) return globalShowAlert("Please select a buyer");
+            
+            const paid = Number(paidAmount || 0);
+            if (paid > netTotal) return globalShowAlert("Paid amount cannot exceed Net Total in normal POS. Add as advance in Ledger.");
+
+            const saleId = generateId('sale');
+            const invoiceNo = `INV-${Date.now().toString().slice(-6)}`;
+            const date = Date.now();
+            const isCredit = paid < netTotal;
+
+            const newSale = {
+              id: saleId,
+              invoiceNo,
+              date,
+              buyerId: selectedBuyerId,
+              items: cart,
+              grossTotal,
+              discount: Number(discount),
+              netTotal,
+              paid,
+              balance: netTotal - paid,
+              status: isCredit ? (paid > 0 ? 'Partial' : 'Unpaid') : 'Paid',
+              terminalId: currentUser.terminalId,
+              userId: currentUser.id
+            };
+
+            updateDb(prev => {
+              cart.forEach(item => {
+                const prod = prev.products.find(p => p.id === item.productId);
+                if (prod) prod.quantity -= item.quantity;
+              });
+
+              prev.sales.push(newSale);
+
+              if (isCredit) {
+                const buyer = prev.buyers.find(b => b.id === selectedBuyerId);
+                if (buyer) {
+                  buyer.balance = (buyer.balance || 0) + newSale.balance;
+                  prev.ledgers.push({
+                    id: generateId('ldg'),
+                    entityType: 'buyer',
+                    entityId: buyer.id,
+                    type: 'Sale (Credit)',
+                    refId: newSale.id,
+                    amount: newSale.balance,
+                    date
+                  });
+                }
+              }
+              return prev;
+            }, `Completed Sale ${invoiceNo}`);
+
+            setInvoiceModal({ isOpen: true, sale: newSale });
+            setCart([]);
+            setDiscount(0);
+            setPaidAmount('');
+            setSelectedBuyerId('');
+          };
+
+          return (
+            <div className="flex gap-4 h-full print:hidden">
+              <div className="flex-1 flex flex-col bg-white rounded-lg shadow p-4">
+                <form onSubmit={handleScan} className="flex gap-2 mb-4">
+                  <Input 
+                    placeholder="Scan Barcode or enter SKU..." 
+                    value={barcodeInput} 
+                    onChange={e => setBarcodeInput(e.target.value)} 
+                    autoFocus
+                  />
+                  <Button type="submit" icon={Search}>Add</Button>
+                </form>
+
+                <div className="flex-1 overflow-auto border rounded mb-4">
+                  <table className="w-full text-left">
+                    <thead className="bg-gray-100 sticky top-0">
+                      <tr>
+                        <th className="p-2">Item</th>
+                        <th className="p-2 text-right">Price</th>
+                        <th className="p-2 text-center">Qty</th>
+                        <th className="p-2 text-right">Total</th>
+                        <th className="p-2 text-center">X</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cart.map((item, idx) => (
+                        <tr key={idx} className="border-b">
+                          <td className="p-2">{item.name} <br/><small className="text-gray-500">{item.barcode}</small></td>
+                          <td className="p-2 text-right">{formatCurrency(item.price)}</td>
+                          <td className="p-2 text-center">{item.quantity}</td>
+                          <td className="p-2 text-right">{formatCurrency(item.lineTotal)}</td>
+                          <td className="p-2 text-center">
+                            <button type="button" onClick={() => setCart(cart.filter((_, i) => i !== idx))} className="text-red-500 font-bold">X</button>
+                          </td>
+                        </tr>
+                      ))}
+                      {cart.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-gray-400">Cart is empty</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="w-80 bg-gray-50 rounded-lg shadow p-4 flex flex-col">
+                <h2 className="text-lg font-bold mb-4">Checkout</h2>
+                
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-1">Select Buyer</label>
+                  <select 
+                    className="w-full p-2 border rounded bg-white"
+                    value={selectedBuyerId}
+                    onChange={e => setSelectedBuyerId(e.target.value)}
+                  >
+                    <option value="">-- Choose Buyer --</option>
+                    {db.buyers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                </div>
+
+                <div className="bg-white p-3 rounded border mb-4 space-y-2">
+                  <div className="flex justify-between text-gray-600">
+                    <span>Gross Total:</span>
+                    <span>{formatCurrency(grossTotal)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-gray-600 border-b pb-2">
+                    <span>Discount:</span>
+                    <input 
+                      type="number" 
+                      className="w-24 text-right border rounded px-1" 
+                      value={discount} 
+                      onChange={e => setDiscount(e.target.value)} 
+                      min="0"
+                    />
+                  </div>
+                  <div className="flex justify-between font-bold text-xl text-blue-600 pt-2">
+                    <span>Net Payable:</span>
+                    <span>{formatCurrency(netTotal)}</span>
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-1">Amount Paid (Cash)</label>
+                  <input 
+                    type="number" 
+                    className="w-full p-2 border rounded bg-white text-lg font-bold" 
+                    value={paidAmount} 
+                    onChange={e => setPaidAmount(e.target.value)} 
+                    placeholder={netTotal.toString()}
+                  />
+                </div>
+
+                <div className="mt-auto space-y-2">
+                  <Button type="button" onClick={completeSale} variant="success" className="w-full h-12 text-lg font-bold">Complete Sale</Button>
+                  <Button type="button" onClick={() => { setCart([]); setDiscount(0); setPaidAmount(''); }} variant="danger" className="w-full">Clear POS</Button>
+                </div>
+              </div>
+
+              <QtyEntryModal 
+                isOpen={qtyModal.isOpen} 
+                product={qtyModal.product} 
+                onClose={() => setQtyModal({ isOpen: false, product: null })} 
+                onSubmit={handleAddQuantity} 
+              />
+              <InvoicePrintModal 
+                isOpen={invoiceModal.isOpen} 
+                sale={invoiceModal.sale} 
+                db={db}
+                onClose={() => setInvoiceModal({ isOpen: false, sale: null })} 
+              />
+            </div>
+          );
+        };
+
+        const QtyEntryModal = ({ isOpen, product, onClose, onSubmit }) => {
+          const [qty, setQty] = useState('');
+          useEffect(() => { if(isOpen) setQty(''); }, [isOpen]);
+          if (!isOpen) return null;
+          return (
+            <Modal isOpen={isOpen} onClose={onClose} title={`Enter Quantity: ${product.name}`}>
+              <div className="mb-4 text-sm text-gray-600">Available Saleable Stock: <b>{product.quantity}</b></div>
+              <form onSubmit={(e) => { e.preventDefault(); onSubmit(qty); }}>
+                <Input type="number" autoFocus placeholder="e.g. 100" value={qty} onChange={e => setQty(e.target.value)} min="1" max={product.quantity} required />
+                <Button type="submit" className="w-full mt-4">Add to Cart</Button>
+              </form>
+            </Modal>
+          );
+        };
+
+        const InvoicePrintModal = ({ isOpen, sale, db, onClose }) => {
+          if (!isOpen || !sale) return null;
+          const buyer = db.buyers.find(b => b.id === sale.buyerId);
+          return (
+            <div className="fixed inset-0 bg-white z-50 flex flex-col p-4">
+              <div className="flex justify-between mb-4 print:hidden">
+                <h2 className="text-xl font-bold">Invoice Preview</h2>
+                <div className="space-x-2 flex">
+                  <Button onClick={() => window.print()} icon={Printer}>Print</Button>
+                  <Button onClick={onClose} variant="secondary">Close</Button>
+                </div>
+              </div>
+              
+              <div className="border border-gray-300 p-8 max-w-2xl mx-auto w-full text-sm">
+                <div className="text-center mb-6">
+                  <h1 className="text-3xl font-black">ECO SHOES</h1>
+                  <p className="text-gray-500">Warehouse & Wholesale</p>
+                </div>
+                
+                <div className="flex justify-between mb-6 pb-4 border-b">
+                  <div>
+                    <b>Invoice To:</b><br/>
+                    {buyer?.name}<br/>
+                    {buyer?.phone}
+                  </div>
+                  <div className="text-right">
+                    <b>Invoice No:</b> {sale.invoiceNo}<br/>
+                    <b>Date:</b> {formatDate(sale.date)}<br/>
+                    <b>Status:</b> {sale.status}
+                  </div>
+                </div>
+
+                <table className="w-full text-left mb-6">
+                  <thead className="border-b-2 border-gray-800">
+                    <tr>
+                      <th className="py-2">Description</th>
+                      <th className="py-2 text-right">Price</th>
+                      <th className="py-2 text-center">Qty</th>
+                      <th className="py-2 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sale.items.map((item, i) => (
+                      <tr key={i} className="border-b">
+                        <td className="py-2">{item.name}<br/><span className="text-xs text-gray-500">{item.barcode}</span></td>
+                        <td className="py-2 text-right">{formatCurrency(item.price)}</td>
+                        <td className="py-2 text-center">{item.quantity}</td>
+                        <td className="py-2 text-right">{formatCurrency(item.lineTotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div className="flex justify-end">
+                  <div className="w-64 space-y-1">
+                    <div className="flex justify-between"><span>Gross:</span> <span>{formatCurrency(sale.grossTotal)}</span></div>
+                    <div className="flex justify-between"><span>Discount:</span> <span>{formatCurrency(sale.discount)}</span></div>
+                    <div className="flex justify-between font-bold text-lg border-t pt-1"><span>Net:</span> <span>{formatCurrency(sale.netTotal)}</span></div>
+                    <div className="flex justify-between text-green-700"><span>Paid:</span> <span>{formatCurrency(sale.paid)}</span></div>
+                    <div className="flex justify-between text-red-700 font-bold border-t pt-1"><span>Balance:</span> <span>{formatCurrency(sale.balance)}</span></div>
+                  </div>
+                </div>
+                
+                <div className="mt-12 text-center text-xs text-gray-500 border-t pt-4">
+                  Terminal: {sale.terminalId} | Thank you for your business.
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const Products = ({ db, updateDb }) => {
+          const [modalOpen, setModalOpen] = useState(false);
+          const [printModalOpen, setPrintModalOpen] = useState(false);
+          const [activeProduct, setActiveProduct] = useState(null);
+          const [formData, setFormData] = useState({});
+
+          const handleSave = (e) => {
+            e.preventDefault();
+            updateDb(prev => {
+              const isNew = !formData.id;
+              const data = { 
+                ...formData, 
+                id: formData.id || generateId('prod'),
+                quantity: Number(formData.quantity || 0),
+                defectiveQuantity: Number(formData.defectiveQuantity || 0),
+                purchasePrice: Number(formData.purchasePrice || 0),
+                salePrice: Number(formData.salePrice || 0)
+              };
+              if (isNew) prev.products.push(data);
+              else prev.products = prev.products.map(p => p.id === data.id ? data : p);
+              return prev;
+            }, formData.id ? `Updated Product ${formData.barcode}` : `Added Product ${formData.barcode}`);
+            setModalOpen(false);
+          };
+
+          const openPrintLabels = (prod) => {
+            setActiveProduct(prod);
+            setPrintModalOpen(true);
+          };
+
+          return (
+            <div>
+              <div className="flex justify-between items-center mb-6">
+                <h1 className="text-2xl font-bold">Products & Stock</h1>
+                <Button icon={Plus} onClick={() => { setFormData({}); setModalOpen(true); }}>Add Product</Button>
+              </div>
+
+              <Card>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-gray-100">
+                      <tr>
+                        <th className="p-2">Name / Code</th>
+                        <th className="p-2 text-center">Saleable Qty</th>
+                        <th className="p-2 text-center">Defective Qty</th>
+                        <th className="p-2 text-right">Sale Price</th>
+                        <th className="p-2 text-center">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {db.products.map(p => (
+                        <tr key={p.id} className="border-b">
+                          <td className="p-2 font-medium">{p.name}<br/><span className="text-xs text-gray-500 font-mono">{p.barcode}</span></td>
+                          <td className="p-2 text-center font-bold text-green-600">{p.quantity}</td>
+                          <td className="p-2 text-center font-bold text-red-600">{p.defectiveQuantity}</td>
+                          <td className="p-2 text-right">{formatCurrency(p.salePrice)}</td>
+                          <td className="p-2 text-center space-x-2">
+                            <button type="button" onClick={() => { setFormData(p); setModalOpen(true); }} className="text-blue-500 hover:underline">Edit</button>
+                            <button type="button" onClick={() => openPrintLabels(p)} className="text-gray-500 hover:text-black">Labels</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+
+              <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={formData.id ? "Edit Product" : "Add Product"}>
+                <form onSubmit={handleSave} className="space-y-4">
+                  <Input label="Product Name" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} required />
+                  <Input label="Category" value={formData.category || ''} onChange={e => setFormData({...formData, category: e.target.value})} />
+                  <Input label="Shared Barcode" value={formData.barcode || ''} onChange={e => setFormData({...formData, barcode: e.target.value})} required />
+                  <div className="flex gap-4">
+                    <Input label="Saleable Qty" type="number" value={formData.quantity || ''} onChange={e => setFormData({...formData, quantity: e.target.value})} required disabled={formData.id} />
+                    <Input label="Defective Qty" type="number" value={formData.defectiveQuantity || ''} onChange={e => setFormData({...formData, defectiveQuantity: e.target.value})} disabled={formData.id} />
+                  </div>
+                  <div className="flex gap-4">
+                    <Input label="Cost Price" type="number" value={formData.purchasePrice || ''} onChange={e => setFormData({...formData, purchasePrice: e.target.value})} required />
+                    <Input label="Sale Price (Wholesale)" type="number" value={formData.salePrice || ''} onChange={e => setFormData({...formData, salePrice: e.target.value})} required />
+                  </div>
+                  <Button type="submit" className="w-full">Save Product</Button>
+                  {formData.id && <p className="text-xs text-red-500 text-center">To change quantities, use Purchases, Sales, or Returns workflows.</p>}
+                </form>
+              </Modal>
+
+              <LabelPrintModal isOpen={printModalOpen} product={activeProduct} onClose={() => setPrintModalOpen(false)} />
+            </div>
+          );
+        };
+
+        const LabelPrintModal = ({ isOpen, product, onClose }) => {
+          const [copies, setCopies] = useState('');
+          useEffect(() => { if(isOpen) setCopies(product?.quantity || 10); }, [isOpen, product]);
+
+          if (!isOpen || !product) return null;
+
+          return (
+            <div className="fixed inset-0 bg-white z-50 flex flex-col p-4">
+              <div className="flex justify-between items-center mb-4 print:hidden">
+                <h2 className="text-xl font-bold">Print Barcode Labels</h2>
+                <div className="flex gap-4 items-center">
+                  <Input type="number" label="Copies" value={copies} onChange={e => setCopies(e.target.value)} className="w-24 mb-0" min="1" />
+                  <Button type="button" onClick={() => window.print()} icon={Printer} className="mt-4">Print {copies} Labels</Button>
+                  <Button type="button" onClick={onClose} variant="secondary" className="mt-4">Close</Button>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-3 gap-4 print:grid-cols-4 content-start h-full overflow-y-auto print:overflow-visible">
+                {Array.from({ length: Number(copies) || 0 }).map((_, i) => (
+                  <div key={i} className="border border-gray-400 p-2 text-center rounded flex flex-col items-center justify-center h-24">
+                    <span className="font-bold text-xs uppercase">{product.name}</span>
+                    <div className="font-barcode text-3xl tracking-widest leading-none my-1">*{product.barcode}*</div>
+                    <span className="font-mono text-xs">{product.barcode}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        };
+
+        const Contacts = ({ db, updateDb, type, currentUser }) => {
+          const isBuyer = type === 'buyer';
+          const data = isBuyer ? db.buyers : db.vendors;
+          const [modalOpen, setModalOpen] = useState(false);
+          const [ledgerModalOpen, setLedgerModalOpen] = useState(false);
+          const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+          const [activeContact, setActiveContact] = useState(null);
+          const [formData, setFormData] = useState({});
+          const [paymentAmt, setPaymentAmt] = useState('');
+
+          const handleSave = (e) => {
+            e.preventDefault();
+            updateDb(prev => {
+              const isNew = !formData.id;
+              const entry = { ...formData, id: formData.id || generateId(type), balance: Number(formData.balance || 0) };
+              if (isNew) prev[isBuyer ? 'buyers' : 'vendors'].push(entry);
+              else prev[isBuyer ? 'buyers' : 'vendors'] = prev[isBuyer ? 'buyers' : 'vendors'].map(x => x.id === entry.id ? entry : x);
+              return prev;
+            }, formData.id ? `Updated ${type} ${formData.name}` : `Added ${type} ${formData.name}`);
+            setModalOpen(false);
+          };
+
+          const handlePayment = (e) => {
+            e.preventDefault();
+            const amount = Number(paymentAmt);
+            if (amount <= 0) return globalShowAlert("Invalid amount");
+
+            updateDb(prev => {
+              const list = prev[isBuyer ? 'buyers' : 'vendors'];
+              const target = list.find(x => x.id === activeContact.id);
+              if (target) {
+                target.balance -= amount;
+                prev.ledgers.push({
+                  id: generateId('ldg'),
+                  entityType: type,
+                  entityId: target.id,
+                  type: isBuyer ? 'Payment Received' : 'Payment Made',
+                  refId: 'Manual',
+                  amount: amount,
+                  date: Date.now()
+                });
+              }
+              return prev;
+            }, `Processed Payment for ${activeContact.name}`);
+            setPaymentModalOpen(false);
+          };
+
+          return (
+            <div>
+              <div className="flex justify-between items-center mb-6">
+                <h1 className="text-2xl font-bold capitalize">{type}s & Ledgers</h1>
+                <Button icon={Plus} onClick={() => { setFormData({}); setModalOpen(true); }}>Add {type}</Button>
+              </div>
+
+              <Card>
+                <table className="w-full text-left">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="p-2">Name</th>
+                      <th className="p-2">Phone</th>
+                      <th className="p-2 text-right">Outstanding Balance</th>
+                      <th className="p-2 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.map(x => (
+                      <tr key={x.id} className="border-b">
+                        <td className="p-2 font-medium">{x.name}</td>
+                        <td className="p-2">{x.phone}</td>
+                        <td className={`p-2 text-right font-bold ${x.balance > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                          {formatCurrency(x.balance)}
+                        </td>
+                        <td className="p-2 text-center space-x-3">
+                          <button type="button" onClick={() => { setActiveContact(x); setLedgerModalOpen(true); }} className="text-blue-600 hover:underline">View Ledger</button>
+                          <button type="button" onClick={() => { setActiveContact(x); setPaymentAmt(''); setPaymentModalOpen(true); }} className="text-green-600 font-bold hover:underline">
+                            {isBuyer ? 'Receive Pay' : 'Make Pay'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+
+              <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={`Add/Edit ${type}`}>
+                <form onSubmit={handleSave} className="space-y-4">
+                  <Input label="Name" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} required />
+                  <Input label="Phone" value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} required />
+                  <Input label="Address" value={formData.address || ''} onChange={e => setFormData({...formData, address: e.target.value})} />
+                  <Input label="Opening Balance" type="number" value={formData.balance || ''} onChange={e => setFormData({...formData, balance: e.target.value})} disabled={formData.id} />
+                  <Button type="submit" className="w-full">Save</Button>
+                </form>
+              </Modal>
+
+              <Modal isOpen={paymentModalOpen} onClose={() => setPaymentModalOpen(false)} title={`Record Payment: ${activeContact?.name}`}>
+                <form onSubmit={handlePayment} className="space-y-4">
+                  <div className="text-sm bg-red-100 text-red-800 p-2 rounded mb-4">Current Outstanding: <b>{formatCurrency(activeContact?.balance || 0)}</b></div>
+                  <Input label="Amount" type="number" autoFocus value={paymentAmt} onChange={e => setPaymentAmt(e.target.value)} min="1" required />
+                  <Button type="submit" className="w-full bg-green-600">Save Payment</Button>
+                </form>
+              </Modal>
+
+              <Modal isOpen={ledgerModalOpen} onClose={() => setLedgerModalOpen(false)} title={`Ledger: ${activeContact?.name}`}>
+                <div className="max-h-96 overflow-y-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-gray-100 sticky top-0">
+                      <tr>
+                        <th className="p-2">Date</th>
+                        <th className="p-2">Type</th>
+                        <th className="p-2">Ref</th>
+                        <th className="p-2 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {db.ledgers.filter(l => l.entityId === activeContact?.id).map(l => (
+                        <tr key={l.id} className="border-b">
+                          <td className="p-2 text-gray-500">{new Date(l.date).toLocaleDateString()}</td>
+                          <td className="p-2 font-medium">{l.type}</td>
+                          <td className="p-2">{l.refId}</td>
+                          <td className="p-2 text-right font-bold text-gray-700">{formatCurrency(l.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Modal>
+            </div>
+          );
+        };
+
+        const Purchases = ({ db, updateDb, currentUser }) => {
+          const [isAdding, setIsAdding] = useState(false);
+
+          if (isAdding) {
+            return <AddPurchase db={db} updateDb={updateDb} currentUser={currentUser} onBack={() => setIsAdding(false)} />;
+          }
+
+          return (
+            <div>
+              <div className="flex justify-between items-center mb-6">
+                <h1 className="text-2xl font-bold">Purchase Management</h1>
+                <Button icon={Plus} onClick={() => setIsAdding(true)}>New Purchase</Button>
+              </div>
+              <Card>
+                <table className="w-full text-left">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="p-2">Date</th>
+                      <th className="p-2">Vendor</th>
+                      <th className="p-2">Invoice No</th>
+                      <th className="p-2 text-right">Total</th>
+                      <th className="p-2 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {db.purchases.map(p => (
+                      <tr key={p.id} className="border-b">
+                        <td className="p-2">{formatDate(p.date)}</td>
+                        <td className="p-2">{db.vendors.find(v=>v.id===p.vendorId)?.name}</td>
+                        <td className="p-2">{p.invoiceNo}</td>
+                        <td className="p-2 text-right font-bold">{formatCurrency(p.total)}</td>
+                        <td className="p-2 text-center">{p.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            </div>
+          );
+        };
+
+        const AddPurchase = ({ db, updateDb, currentUser, onBack }) => {
+          const [vendorId, setVendorId] = useState('');
+          const [cart, setCart] = useState([]);
+          const [paid, setPaid] = useState('');
+          const [barcodeInput, setBarcodeInput] = useState('');
+
+          const total = cart.reduce((sum, item) => sum + (item.qty * item.cost), 0);
+
+          const handleScan = (e) => {
+            e.preventDefault();
+            const product = db.products.find(p => p.barcode === barcodeInput);
+            if (!product) {
+              globalShowAlert("Product not found. Please add it in Products section first.");
+            } else {
+              setCart([...cart, { productId: product.id, name: product.name, barcode: product.barcode, qty: 100, cost: product.purchasePrice }]);
+            }
+            setBarcodeInput('');
+          };
+
+          const savePurchase = () => {
+            if(!vendorId || cart.length === 0) return globalShowAlert("Select vendor and add items.");
+            
+            const pAmt = Number(paid || 0);
+            const balance = total - pAmt;
+            const purId = generateId('pur');
+
+            updateDb(prev => {
+              cart.forEach(item => {
+                const prod = prev.products.find(p => p.id === item.productId);
+                if (prod) prod.quantity += Number(item.qty);
+              });
+              
+              prev.purchases.push({
+                id: purId,
+                invoiceNo: `PUR-${Date.now().toString().slice(-5)}`,
+                vendorId,
+                date: Date.now(),
+                items: cart,
+                total,
+                paid: pAmt,
+                status: balance > 0 ? 'Credit' : 'Paid'
+              });
+              
+              if (balance > 0) {
+                const vendor = prev.vendors.find(v => v.id === vendorId);
+                if (vendor) {
+                  vendor.balance = (vendor.balance || 0) + balance;
+                  prev.ledgers.push({
+                    id: generateId('ldg'), entityType: 'vendor', entityId: vendorId, type: 'Purchase (Credit)', refId: purId, amount: balance, date: Date.now()
+                  });
+                }
+              }
+              return prev;
+            }, "Added new Purchase");
+            onBack();
+          };
+
+          return (
+            <Card title="Enter New Purchase">
+              <div className="flex gap-4 mb-4">
+                <select className="p-2 border rounded w-64" value={vendorId} onChange={e=>setVendorId(e.target.value)}>
+                  <option value="">-- Select Vendor --</option>
+                  {db.vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </select>
+                <form onSubmit={handleScan} className="flex-1 flex gap-2">
+                  <Input placeholder="Scan Barcode to add..." value={barcodeInput} onChange={e=>setBarcodeInput(e.target.value)} />
+                  <Button type="submit">Add Item</Button>
+                </form>
+              </div>
+              <table className="w-full text-left mb-4">
+                <thead className="bg-gray-100"><tr><th>Item</th><th>Qty</th><th>Unit Cost</th><th>Total</th></tr></thead>
+                <tbody>
+                  {cart.map((item, i) => (
+                    <tr key={i} className="border-b">
+                      <td>{item.name}</td>
+                      <td><input type="number" value={item.qty} onChange={e => { const newCart=[...cart]; newCart[i].qty=e.target.value; setCart(newCart); }} className="border w-24 p-1" /></td>
+                      <td><input type="number" value={item.cost} onChange={e => { const newCart=[...cart]; newCart[i].cost=e.target.value; setCart(newCart); }} className="border w-24 p-1" /></td>
+                      <td>{formatCurrency(item.qty * item.cost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="flex justify-end gap-4 items-center mt-6 border-t pt-4">
+                <div className="text-xl">Total: <b>{formatCurrency(total)}</b></div>
+                <div>
+                  <label className="text-sm">Amount Paid: </label>
+                  <input type="number" className="border p-2 rounded" value={paid} onChange={e=>setPaid(e.target.value)} />
+                </div>
+                <Button type="button" onClick={savePurchase} variant="success">Save Purchase</Button>
+                <Button type="button" onClick={onBack} variant="secondary">Cancel</Button>
+              </div>
+            </Card>
+          );
+        };
+
+        const Returns = ({ db, updateDb, currentUser, isAdmin }) => {
+          const [invoiceSearch, setInvoiceSearch] = useState('');
+          const [foundSale, setFoundSale] = useState(null);
+          const [modalData, setModalData] = useState(null); 
+
+          const handleSearch = (e) => {
+            e.preventDefault();
+            const sale = db.sales.find(s => s.invoiceNo === invoiceSearch);
+            if(sale) setFoundSale(sale);
+            else globalShowAlert("Invoice not found.");
+          };
+
+          const processReturn = (item, returnQty, isDefective, mode, replacementBarcode) => {
+            const qty = Number(returnQty);
+            if(qty <= 0 || qty > item.quantity) return globalShowAlert("Invalid return quantity.");
+            
+            let replacementProd = null;
+            if (mode === 'replace') {
+              replacementProd = db.products.find(p => p.barcode === replacementBarcode);
+              if(!replacementProd) return globalShowAlert("Replacement barcode not found in active products.");
+              if(replacementProd.quantity < qty) return globalShowAlert("Not enough stock for replacement.");
+            }
+
+            updateDb(prev => {
+              const returnedProd = prev.products.find(p => p.id === item.productId);
+              if (isDefective) returnedProd.defectiveQuantity += qty;
+              else returnedProd.quantity += qty;
+
+              const returnLog = {
+                id: generateId('ret'),
+                saleId: foundSale.id,
+                buyerId: foundSale.buyerId,
+                date: Date.now(),
+                type: isDefective ? 'Defective Return' : 'Normal Return',
+                mode: mode,
+                quantity: qty,
+                productId: item.productId
+              };
+
+              if (mode === 'refund') {
+                const refundAmt = qty * item.price; 
+                const buyer = prev.buyers.find(b => b.id === foundSale.buyerId);
+                buyer.balance -= refundAmt; 
+                prev.ledgers.push({
+                  id: generateId('ldg'), entityType: 'buyer', entityId: buyer.id, 
+                  type: 'Refund/Credit Note', refId: returnLog.id, amount: -refundAmt, date: Date.now()
+                });
+              } else if (mode === 'replace') {
+                const replP = prev.products.find(p => p.id === replacementProd.id);
+                replP.quantity -= qty;
+                returnLog.replacementProductId = replP.id;
+              }
+              
+              prev.returns.push(returnLog);
+              
+              const prevSale = prev.sales.find(s => s.id === foundSale.id);
+              const prevItem = prevSale.items.find(i => i.productId === item.productId);
+              prevItem.quantity -= qty; 
+
+              return prev;
+            }, `Processed ${mode} for Invoice ${foundSale.invoiceNo}`);
+            
+            setModalData(null);
+            setFoundSale(null); 
+            globalShowAlert("Return Processed Successfully");
+          };
+
+          return (
+            <div>
+              <h1 className="text-2xl font-bold mb-6">Returns, Refunds & Replacements</h1>
+              <Card title="Search Original Sale">
+                <form onSubmit={handleSearch} className="flex gap-2">
+                  <Input placeholder="Enter Invoice Number (e.g. INV-123456)" value={invoiceSearch} onChange={e=>setInvoiceSearch(e.target.value)} />
+                  <Button type="submit" icon={Search}>Find Invoice</Button>
+                </form>
+              </Card>
+
+              {foundSale && (
+                <Card title={`Invoice Details: ${foundSale.invoiceNo}`} className="mt-4 border-l-4 border-blue-500">
+                  <table className="w-full text-left mb-4">
+                    <thead className="bg-gray-100"><tr><th>Item</th><th>Sold Qty</th><th>Unit Price</th><th>Actions</th></tr></thead>
+                    <tbody>
+                      {foundSale.items.map((item, idx) => (
+                        <tr key={idx} className="border-b">
+                          <td className="p-2">{item.name}</td>
+                          <td className="p-2">{item.quantity}</td>
+                          <td className="p-2">{formatCurrency(item.price)}</td>
+                          <td className="p-2 space-x-2">
+                            {item.quantity > 0 ? (
+                              <>
+                                <button type="button" onClick={()=>setModalData({item, mode:'refund'})} className="text-red-600 underline">Refund</button>
+                                <button type="button" onClick={()=>setModalData({item, mode:'replace'})} className="text-blue-600 underline">Replace</button>
+                              </>
+                            ) : <span className="text-gray-400">Fully Returned</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </Card>
+              )}
+
+              {modalData && (
+                <ReturnActionModal 
+                  isOpen={true} 
+                  data={modalData} 
+                  onClose={()=>setModalData(null)} 
+                  onSubmit={processReturn}
+                />
+              )}
+
+              {isAdmin && (
+                <Card title="Recent Returns Log" className="mt-8">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-gray-100"><tr><th>Date</th><th>Type</th><th>Mode</th><th>Qty</th></tr></thead>
+                    <tbody>
+                      {db.returns.map(r => (
+                        <tr key={r.id} className="border-b">
+                          <td className="p-2">{formatDate(r.date)}</td>
+                          <td className="p-2">{r.type}</td>
+                          <td className="p-2 uppercase font-bold">{r.mode}</td>
+                          <td className="p-2">{r.quantity}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </Card>
+              )}
+            </div>
+          );
+        };
+
+        const ReturnActionModal = ({ isOpen, data, onClose, onSubmit }) => {
+          const [qty, setQty] = useState('');
+          const [isDefective, setIsDefective] = useState(false);
+          const [replacementBarcode, setReplacementBarcode] = useState('');
+
+          const handleSubmit = (e) => {
+            e.preventDefault();
+            onSubmit(data.item, qty, isDefective, data.mode, replacementBarcode);
+          };
+
+          return (
+            <Modal isOpen={isOpen} onClose={onClose} title={`${data.mode === 'refund' ? 'Process Refund' : 'Process Replacement'}`}>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="bg-gray-100 p-2 text-sm">Item: <b>{data.item.name}</b> | Max Qty: <b>{data.item.quantity}</b></div>
+                <Input label="Quantity to Return" type="number" max={data.item.quantity} value={qty} onChange={e=>setQty(e.target.value)} required autoFocus />
+                
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" id="defect" checked={isDefective} onChange={e=>setIsDefective(e.target.checked)} className="w-5 h-5" />
+                  <label htmlFor="defect" className="font-bold text-red-600">Mark as Defective (Moves to Defective Stock)</label>
+                </div>
+
+                {data.mode === 'replace' && (
+                  <Input label="Scan Replacement Barcode" value={replacementBarcode} onChange={e=>setReplacementBarcode(e.target.value)} required />
+                )}
+
+                <Button type="submit" variant="danger" className="w-full">Confirm Action</Button>
+              </form>
+            </Modal>
+          );
+        };
+
+        const Reports = ({ db }) => {
+          return (
+            <div>
+              <h1 className="text-2xl font-bold mb-6">System Reports</h1>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <Card title="Sales By Terminal (Lifetime)">
+                  <ul className="space-y-2">
+                    {Object.entries(db.sales.reduce((acc, s) => {
+                      acc[s.terminalId] = (acc[s.terminalId] || 0) + s.netTotal; return acc;
+                    }, {})).map(([term, amount]) => (
+                      <li key={term} className="flex justify-between border-b pb-1">
+                        <span>{term}</span><span className="font-bold">{formatCurrency(amount)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+
+                <Card title="Defective Stock Alert">
+                  <table className="w-full text-left text-sm">
+                    <thead><tr className="border-b"><th>Product</th><th className="text-right">Defective Qty</th></tr></thead>
+                    <tbody>
+                      {db.products.filter(p => p.defectiveQuantity > 0).map(p => (
+                        <tr key={p.id}>
+                          <td className="py-1">{p.name} <span className="text-xs text-gray-500">({p.barcode})</span></td>
+                          <td className="py-1 text-right text-red-600 font-bold">{p.defectiveQuantity}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </Card>
+              </div>
+
+              <Card title="Full Audit Log" className="mt-6 max-h-96 overflow-y-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-gray-100 sticky top-0"><tr><th>Date</th><th>Action</th><th>User</th><th>Terminal</th></tr></thead>
+                  <tbody>
+                    {db.auditLogs.map(log => (
+                      <tr key={log.id} className="border-b">
+                        <td className="py-2 text-gray-500">{new Date(log.date).toLocaleString()}</td>
+                        <td className="py-2">{log.action}</td>
+                        <td className="py-2">{log.user}</td>
+                        <td className="py-2">{log.terminal}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            </div>
+          );
+        };
+
+        const System = ({ db, updateDb }) => {
+          const handleBackup = () => {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(db));
+            const dlAnchorElem = document.createElement('a');
+            dlAnchorElem.setAttribute("href", dataStr);
+            dlAnchorElem.setAttribute("download", `EcoShoes_Backup_${new Date().toISOString().split('T')[0]}.json`);
+            dlAnchorElem.click();
+            updateDb(d=>d, "Created Full System Backup");
+          };
+
+          const handleRestore = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              try {
+                const restoredDb = JSON.parse(event.target.result);
+                if(restoredDb.users && restoredDb.products) { 
+                   localStorage.setItem('ecoShoesDb', JSON.stringify(restoredDb));
+                   globalShowAlert("Restore successful! System will reload.");
+                   setTimeout(() => window.location.reload(), 1500);
+                } else {
+                   globalShowAlert("Invalid backup file format.");
+                }
+              } catch (err) {
+                globalShowAlert("Error parsing backup file.");
+              }
+            };
+            reader.readAsText(file);
+          };
+
+          const handleExportSync = () => {
+            const syncPayload = {
+              timestamp: Date.now(),
+              sales: db.sales, 
+              returns: db.returns,
+              ledgers: db.ledgers
+            };
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(syncPayload));
+            const a = document.createElement('a');
+            a.href = dataStr;
+            a.download = `TerminalSyncData.json`;
+            a.click();
+          };
+
+          const handleImportSync = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              try {
+                const payload = JSON.parse(event.target.result);
+                updateDb(prev => {
+                   let newSalesCount = 0;
+                   payload.sales?.forEach(s => {
+                     if(!prev.sales.find(existing => existing.id === s.id)) {
+                       prev.sales.push(s);
+                       newSalesCount++;
+                       s.items.forEach(item => {
+                         const prod = prev.products.find(p => p.id === item.productId);
+                         if (prod) prod.quantity -= item.quantity;
+                       });
+                     }
+                   });
+                   payload.returns?.forEach(r => {
+                     if(!prev.returns.find(existing => existing.id === r.id)) {
+                       prev.returns.push(r);
+                     }
+                   });
+                   payload.ledgers?.forEach(l => {
+                     if(!prev.ledgers.find(existing => existing.id === l.id)) {
+                       prev.ledgers.push(l);
+                       if(l.entityType === 'buyer') {
+                         const b = prev.buyers.find(x => x.id === l.entityId);
+                         if(b) b.balance += l.amount;
+                       }
+                     }
+                   });
+                   globalShowAlert(`Sync complete! ${newSalesCount} new sales merged.`);
+                   return prev;
+                }, "Executed Multi-Terminal Sync Merge");
+              } catch (err) {
+                globalShowAlert("Error reading sync payload.");
+              }
+            };
+            reader.readAsText(file);
+          };
+
+          return (
+            <div className="max-w-4xl">
+              <h1 className="text-2xl font-bold mb-6">System Settings & Data Control</h1>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <Card title="Backup & Restore (Full Data)">
+                  <p className="text-sm text-gray-600 mb-4">Create a complete offline backup of the entire database, or restore from a previous file.</p>
+                  <div className="space-y-4 border-t pt-4">
+                    <Button type="button" onClick={handleBackup} icon={Download} className="w-full">Download Full Backup</Button>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Restore from Backup File</label>
+                      <input type="file" accept=".json" onChange={handleRestore} className="block w-full text-sm border p-2 rounded" />
+                    </div>
+                    <div className="bg-red-50 text-red-700 p-2 text-xs rounded border border-red-200 flex items-start gap-2">
+                      <AlertCircle size={16} className="flex-shrink-0" /> Restore will overwrite all current data.
+                    </div>
+                  </div>
+                </Card>
+
+                <Card title="Multi-Terminal Sync (Offline Merge)">
+                  <p className="text-sm text-gray-600 mb-4">Simulate LAN synchronization by exporting terminal data and merging it into the Admin database.</p>
+                  <div className="space-y-4 border-t pt-4">
+                     <Button type="button" onClick={handleExportSync} icon={Upload} variant="secondary" className="w-full border-2 border-gray-300">Export Pending Sync Data</Button>
+                     <div>
+                      <label className="block text-sm font-medium mb-1">Import Sync Data from Terminal</label>
+                      <input type="file" accept=".json" onChange={handleImportSync} className="block w-full text-sm border p-2 rounded" />
+                    </div>
+                    <div className="bg-blue-50 text-blue-700 p-2 text-xs rounded border border-blue-200 flex items-start gap-2">
+                      <FileText size={16} className="flex-shrink-0" /> Imports merge cleanly avoiding duplicates based on unique Transaction IDs.
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            </div>
+          );
+        };
+
+        // Render the App
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
